@@ -2843,54 +2843,11 @@ class localrepository:
         """Add a new revision to current repository.
         Revision information is passed via the context argument.
         """
+        _validate_committable_ctx(self.ui, ctx)
 
         tr = None
         p1, p2 = ctx.p1(), ctx.p2()
         user = ctx.user()
-
-        if (
-            not self.ui.configbool("commit", "allow-non-printable")
-            and not self.ui.plain()
-        ):
-            _check_non_printable(self.ui, ctx.description())
-
-        descriptionlimit = self.ui.configbytes("commit", "description-size-limit")
-        if descriptionlimit:
-            descriptionlen = len(ctx.description())
-            if descriptionlen > descriptionlimit:
-                raise errormod.Abort(
-                    _("commit message length (%s) exceeds configured limit (%s)")
-                    % (descriptionlen, descriptionlimit)
-                )
-
-        extraslimit = self.ui.configbytes("commit", "extras-size-limit")
-        if extraslimit:
-            extraslen = sum(len(k) + len(v) for k, v in pycompat.iteritems(ctx.extra()))
-            if extraslen > extraslimit:
-                raise errormod.Abort(
-                    _("commit extras total size (%s) exceeds configured limit (%s)")
-                    % (extraslen, extraslimit)
-                )
-
-        file_count_limit = self.ui.configint("commit", "file-count-limit")
-        if file_count_limit and file_count_limit < len(ctx.files()):
-            support = self.ui.config("ui", "supportcontact")
-            if support:
-                hint = (
-                    _(
-                        "contact %s for help or use '--config commit.file-count-limit=N' cautiously to override"
-                    )
-                    % support
-                )
-            else:
-                hint = _(
-                    "use '--config commit.file-count-limit=N' cautiously to override"
-                )
-            raise errormod.Abort(
-                _("commit file count (%d) exceeds configured limit (%d)")
-                % (len(ctx.files()), file_count_limit),
-                hint=hint,
-            )
 
         isgit = git.isgitformat(self)
         lock = self.lock()
@@ -2907,22 +2864,11 @@ class localrepository:
                 m2ctx = p2.manifestctx()
                 mctx = m1ctx.copy()
 
-                m = mctx.read()
                 m1 = m1ctx.read()
                 m2 = m2ctx.read()
+                m = mctx.read()
 
-                # Validate that the files that are checked in can be interpreted
-                # as utf8. This is to protect against potential crashes as we
-                # move to utf8 file paths. Changing encoding is a beast on top
-                # of storage format.
-                try:
-                    for f in ctx.added():
-                        if isinstance(f, bytes):
-                            f.decode("utf-8")
-                except UnicodeDecodeError as inst:
-                    raise errormod.Abort(
-                        _("invalid file name encoding: %s!") % inst.object
-                    )
+                _validate_file_paths_utf8(ctx.added())
 
                 # check in files
                 added = []
@@ -2971,8 +2917,7 @@ class localrepository:
                                 fctx, m1, m2, linkrev, trp, changed
                             )
                         assert filenode != nullid, "manifest should not have nullid"
-                        m[f] = filenode
-                        m.setflag(f, fctx.flags())
+                        m.set(f, filenode, fctx.flags())
                     except OSError:
                         self.ui.warn(_("trouble committing %s!\n") % f)
                         raise
@@ -3553,3 +3498,57 @@ def _openchangelog(repo):
     repo._rsrepo.invalidatechangelog()
     inner = repo._rsrepo.changelog()
     return changelog2.changelog(repo, inner, repo.ui.uiconfig())
+
+
+def _validate_committable_ctx(ui, ctx):
+    if not ui.configbool("commit", "allow-non-printable") and not ui.plain():
+        _check_non_printable(ui, ctx.description())
+
+    descriptionlimit = ui.configbytes("commit", "description-size-limit")
+    if descriptionlimit:
+        descriptionlen = len(ctx.description())
+        if descriptionlen > descriptionlimit:
+            raise errormod.Abort(
+                _("commit message length (%s) exceeds configured limit (%s)")
+                % (descriptionlen, descriptionlimit)
+            )
+
+    extraslimit = ui.configbytes("commit", "extras-size-limit")
+    if extraslimit:
+        extraslen = sum(len(k) + len(v) for k, v in pycompat.iteritems(ctx.extra()))
+        if extraslen > extraslimit:
+            raise errormod.Abort(
+                _("commit extras total size (%s) exceeds configured limit (%s)")
+                % (extraslen, extraslimit)
+            )
+
+    file_count_limit = ui.configint("commit", "file-count-limit")
+    if file_count_limit and file_count_limit < len(ctx.files()):
+        support = ui.config("ui", "supportcontact")
+        if support:
+            hint = (
+                _(
+                    "contact %s for help or use '--config commit.file-count-limit=N' cautiously to override"
+                )
+                % support
+            )
+        else:
+            hint = _("use '--config commit.file-count-limit=N' cautiously to override")
+        raise errormod.Abort(
+            _("commit file count (%d) exceeds configured limit (%d)")
+            % (len(ctx.files()), file_count_limit),
+            hint=hint,
+        )
+
+
+def _validate_file_paths_utf8(file_paths):
+    # Validate that the files that are checked in can be interpreted
+    # as utf8. This is to protect against potential crashes as we
+    # move to utf8 file paths. Changing encoding is a beast on top
+    # of storage format.
+    try:
+        for f in file_paths:
+            if isinstance(f, bytes):
+                f.decode("utf-8")
+    except UnicodeDecodeError as inst:
+        raise errormod.Abort(_("invalid file name encoding: %s!") % inst.object)
