@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::time::Duration;
 
+use anyhow::Error;
 use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -24,6 +25,9 @@ use memcache::KeyGen;
 #[cfg(fbcode_build)]
 use mysql_client::MysqlError;
 use sql_query_config::CachingConfig;
+use stats::prelude::DynamicTimeseries;
+
+use crate::telemetry::STATS;
 
 const RETRY_ATTEMPTS: usize = 2;
 
@@ -98,13 +102,30 @@ macro_rules! mononoke_queries {
                 #[allow(unused_imports)]
                 use $crate::_macro_internal::*;
 
-                #[allow(dead_code)]
+                 #[allow(dead_code)]
                 pub async fn query(
                     connection: &Connection,
                     sql_query_tel: SqlQueryTelemetry,
                     $( $pname: &$ptype, )*
                     $( $lname: &[ $ltype ], )*
                 ) -> Result<Vec<($( $rtype, )*)>> {
+                    let res = query_impl(
+                        connection,
+                        sql_query_tel,
+                        $( $pname, )*
+                        $( $lname, )*
+                    )
+                    .await?;
+
+                    Ok(res.0)
+                }
+                #[allow(dead_code)]
+                async fn query_impl(
+                    connection: &Connection,
+                    sql_query_tel: SqlQueryTelemetry,
+                    $( $pname: &$ptype, )*
+                    $( $lname: &[ $ltype ], )*
+                ) -> Result<(Vec<($( $rtype, )*)>, Option<QueryTelemetry>)> {
                     let query_name = stringify!($name);
                     let shard_name = connection.shard_name();
                     query_with_retry_no_cache(
@@ -137,7 +158,7 @@ macro_rules! mononoke_queries {
                                 })?;
 
                                 log_query_telemetry(
-                                    opt_tel,
+                                    opt_tel.clone(),
                                     &sql_query_tel,
                                     granularity,
                                     repo_ids,
@@ -146,7 +167,7 @@ macro_rules! mononoke_queries {
                                 )?;
 
 
-                                Ok(res)
+                                Ok((res, opt_tel))
                             }
                         },
                         shard_name,
@@ -849,30 +870,7 @@ where
         .jitter(Duration::from_secs(5))
         .max_attempts(RETRY_ATTEMPTS)
         .inspect_err(|attempt, e| {
-            #[cfg(fbcode_build)]
-            if let Some(e) = e.downcast_ref::<MysqlError>() {
-                use stats::prelude::DynamicTimeseries;
-
-                use crate::telemetry::STATS;
-
-                // Get just the enum variant name using std::any::type_name
-                let error_type = std::any::type_name_of_val(e)
-                    .split("::")
-                    .last()
-                    .unwrap_or("Unknown");
-
-                let error_key = if let Some(mysql_errno) = e.mysql_errno() {
-                    format!("{error_type}.{mysql_errno}")
-                } else {
-                    error_type.to_string()
-                };
-                STATS::query_retry_attempts.add_value(
-                    attempt as i64,
-                    (shard_name.to_string(), query_name.to_string(), error_key),
-                );
-            };
-            #[cfg(not(fbcode_build))]
-            let _ = (attempt, shard_name, query_name, e);
+            bump_error_counters(e, attempt, shard_name, query_name);
         })
         .await?
         .0)
@@ -912,4 +910,26 @@ where
     } else {
         fetch().await
     }
+}
+fn bump_error_counters(e: &Error, attempt: usize, shard_name: &str, query_name: &str) {
+    #[cfg(fbcode_build)]
+    if let Some(e) = e.downcast_ref::<MysqlError>() {
+        // Get just the enum variant name using std::any::type_name
+        let error_type = std::any::type_name_of_val(e)
+            .split("::")
+            .last()
+            .unwrap_or("Unknown");
+
+        let error_key = if let Some(mysql_errno) = e.mysql_errno() {
+            format!("{error_type}.{mysql_errno}")
+        } else {
+            error_type.to_string()
+        };
+        STATS::query_retry_attempts.add_value(
+            attempt as i64,
+            (shard_name.to_string(), query_name.to_string(), error_key),
+        );
+    };
+    #[cfg(not(fbcode_build))]
+    let _ = (attempt, shard_name, query_name, e);
 }
