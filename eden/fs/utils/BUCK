@@ -109,6 +109,7 @@ cpp_library(
         "NotImplemented.h",
     ],
     deps = [
+        "fbsource//third-party/re2:re2",
         "//eden/common/utils:system_error",
         "//eden/common/utils/windows:win_error",
     ],
@@ -116,6 +117,7 @@ cpp_library(
         "fbsource//third-party/fmt:fmt",
         "//eden/common/utils:utf8",
         "//eden/fs/service:thrift-cpp2-types",
+        "//eden/scm/lib/backingstore:sapling_backingstore_error",
         "//folly:exception_wrapper",
     ],
 )

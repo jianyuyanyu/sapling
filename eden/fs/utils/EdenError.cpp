@@ -6,6 +6,7 @@
  */
 
 #include "eden/fs/utils/EdenError.h"
+#include <re2/re2.h>
 
 #include "eden/common/utils/SystemError.h"
 #include "eden/common/utils/windows/WinError.h"
@@ -48,10 +49,41 @@ EdenError newEdenError(const folly::exception_wrapper& ew) {
   EdenError err;
   if (!ew.with_exception([&err](const EdenError& ex) { err = ex; }) &&
       !ew.with_exception(
-          [&err](const std::system_error& ex) { err = newEdenError(ex); })) {
+          [&err](const std::system_error& ex) { err = newEdenError(ex); }) &&
+      !ew.with_exception([&err](const sapling::SaplingBackingStoreError& ex) {
+        err = newEdenError(ex);
+      })) {
     err = newEdenError(
         EdenErrorType::GENERIC_ERROR, folly::exceptionStr(ew).toStdString());
   }
   return err;
 }
+
+namespace {
+// TODO: Stop relying on formats of Sapling error messages. Instead,
+// pass errors with formally defined structures across backingstore FFI.
+std::optional<int> extractNetworkError(std::string_view msg) {
+  static const re2::RE2 kCurl{R"(Network Error: \[(\d+)\])"};
+  static const re2::RE2 kHttp{R"(server responded (\d+))"};
+  int code;
+  if (RE2::PartialMatch(msg, kCurl, &code) ||
+      RE2::PartialMatch(msg, kHttp, &code)) {
+    return code;
+  }
+  return std::nullopt;
+}
+} // namespace
+
+EdenError newEdenError(const sapling::SaplingBackingStoreError& ex) {
+  std::optional<int> code = extractNetworkError(ex.what());
+  if (code.has_value()) {
+    return newEdenError(
+        code.value(),
+        EdenErrorType::NETWORK_ERROR,
+        folly::exceptionStr(ex).toStdString());
+  }
+
+  return newEdenError(static_cast<const std::exception&>(ex));
+}
+
 } // namespace facebook::eden
