@@ -964,7 +964,6 @@ export type ClientToServerMessage =
   | {type: 'fetchLandInfo'; topOfStack: DiffId}
   | {type: 'fetchAndSetStables'; additionalStables: Array<string>}
   | {type: 'fetchStableLocationAutocompleteOptions'}
-  | {type: 'fetchRecommendedBookmarks'; recommendedBookmarks: Array<string>}
   | {type: 'confirmLand'; landConfirmationInfo: LandConfirmationInfo}
   | {type: 'getSuggestedReviewers'; context: {paths: Array<string>}; key: string}
   | {type: 'getConfiguredMergeTool'}
@@ -1124,6 +1123,7 @@ export type ServerToClientMessage =
   | {type: 'confirmedLand'; result: Result<undefined>}
   | {type: 'fetchedCommitCloudState'; state: Result<CommitCloudSyncState>}
   | {type: 'fetchedStables'; stables: StableLocationData}
+  | {type: 'fetchedRecommendedBookmarks'; bookmarks: Array<string>}
   | {type: 'fetchedStableLocationAutocompleteOptions'; result: Result<Array<TypeaheadResult>>}
   | {type: 'renderedMarkup'; html: string; id: number}
   | {type: 'gotSuggestedReviewers'; reviewers: Array<string>; key: string}

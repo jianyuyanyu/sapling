@@ -388,7 +388,11 @@ export default class ServerToClientAPI {
             const disposables: Array<Disposable> = [];
             // send changes as they come from file watcher
             disposables.push(repo.subscribeToSmartlogCommitsChanges(postSmartlogCommits));
-            // trigger a fetch on startup
+
+            // trigger fetches on startup
+            repo.fetchAndSetRecommendedBookmarks(bookmarks => {
+              this.postMessage({type: 'fetchedRecommendedBookmarks', bookmarks});
+            });
             repo.fetchSmartlogCommits();
 
             disposables.push(
@@ -604,6 +608,9 @@ export default class ServerToClientAPI {
       }
       case 'refresh': {
         logger?.log('refresh requested');
+        repo.fetchAndSetRecommendedBookmarks(bookmarks => {
+          this.postMessage({type: 'fetchedRecommendedBookmarks', bookmarks});
+        });
         repo.fetchSmartlogCommits();
         repo.fetchUncommittedChanges();
         repo.fetchSubmoduleMap();
@@ -1007,11 +1014,6 @@ export default class ServerToClientAPI {
             this.postMessage({type: 'fetchedStableLocationAutocompleteOptions', result});
           },
         );
-        break;
-      }
-      case 'fetchRecommendedBookmarks': {
-        repo.recommendedBookmarks = data.recommendedBookmarks;
-        repo.pullRecommendedBookmarks(ctx);
         break;
       }
       case 'fetchDevEnvType': {
